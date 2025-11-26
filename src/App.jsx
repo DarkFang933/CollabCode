@@ -22,20 +22,33 @@ const db = getDatabase(app);
 function initializeRealtimeSync(editor, roomId) {
   const docRef = ref(db, `documents/${roomId}`);
 
+  let suppress = false;
+
+  // Listen for remote changes
   onValue(docRef, (snapshot) => {
     const data = snapshot.val();
-    if (data && data.content !== editor.getValue()) {
-      const position = editor.getPosition();
-      editor.setValue(data.content);
-      editor.setPosition(position);
+    if (!data) return;
+
+    const remote = data.content || "";
+    const local = editor.getValue();
+
+    if (remote !== local) {
+      suppress = true;
+      const pos = editor.getPosition();
+      editor.setValue(remote);
+      if (pos) editor.setPosition(pos);
+      suppress = false;
     }
   });
 
+  // Push local edits
   editor.onDidChangeModelContent(() => {
+    if (suppress) return; 
     const content = editor.getValue();
     set(docRef, { content });
   });
 }
+
 
 // Utility function to generate random session ID
 const generateSessionId = () => {
@@ -245,9 +258,9 @@ function EditorPage() {
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
 
-  const handleEditorMount = (editor) => {
-    initializeRealtimeSync(editor, roomId);
-  };
+  const handleEditorMount = (editor, monaco) => {
+  initializeRealtimeSync(editor, roomId);
+};
 
   const copyRoomId = () => {
     navigator.clipboard.writeText(roomId);
