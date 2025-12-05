@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, useNavigate, useParams, Link } from 'react-router-dom';
 import Editor from '@monaco-editor/react';
 
-// Backend integration (Claude does NOT modify this)
+// Backend integration 
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, onValue, set } from 'firebase/database';
 
 const firebaseConfig = {
-   apiKey: "AIzaSyC2uS-fcWCYzMyQqCy72EkBl8CWdoLCpus",
+  apiKey: "AIzaSyC2uS-fcWCYzMyQqCy72EkBl8CWdoLCpus",
   authDomain: "collab-editor-44d5f.firebaseapp.com",
   databaseURL: "https://collab-editor-44d5f-default-rtdb.firebaseio.com",
   projectId: "collab-editor-44d5f",
@@ -43,7 +43,7 @@ function initializeRealtimeSync(editor, roomId) {
 
   // Push local edits
   editor.onDidChangeModelContent(() => {
-    if (suppress) return; 
+    if (suppress) return;
     const content = editor.getValue();
     set(docRef, { content });
   });
@@ -257,10 +257,20 @@ function EditorPage() {
   const { id: roomId } = useParams();
   const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
+  const [editorRef, setEditorRef] = useState(null);
+  const [output, setOutput] = useState("");
+  const [showConsole, setShowConsole] = useState(true);
+  const [isRecording, setIsRecording] = useState(false);
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [recordedChunks, setRecordedChunks] = useState([]);
+
+
 
   const handleEditorMount = (editor, monaco) => {
-  initializeRealtimeSync(editor, roomId);
-};
+    setEditorRef(editor);
+    initializeRealtimeSync(editor, roomId);
+  };
+
 
   const copyRoomId = () => {
     navigator.clipboard.writeText(roomId);
@@ -271,6 +281,91 @@ function EditorPage() {
   const leaveSession = () => {
     navigate('/');
   };
+
+  // RUN CODE FUNCTION
+  const runCode = () => {
+    if (!editorRef) return;
+
+    const userCode = editorRef.getValue();
+    let consoleOutput = "";
+
+    // Capture console.log
+    const originalLog = console.log;
+    console.log = (...args) => {
+      consoleOutput += args.join(" ") + "\n";
+      originalLog(...args);
+    };
+
+    try {
+      const result = new Function(userCode)();
+      if (result !== undefined) {
+        consoleOutput += `\nReturned: ${result}\n`;
+      }
+    } catch (err) {
+      consoleOutput += `\nError: ${err.message}\n`;
+    }
+
+    console.log = originalLog; // restore default
+
+    setOutput(consoleOutput);
+    setShowConsole(true);
+  };
+
+  // START RECORDING
+ // outside component OR inside component but not in state:
+let chunks = [];
+
+const startRecording = async () => {
+  try {
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 30 },
+      audio: false
+    });
+
+    const recorder = new MediaRecorder(stream);
+    setMediaRecorder(recorder); // keep this in state (OK)
+
+    let chunks = []; // reset raw chunk array
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      const blob = new Blob(chunks, { type: "video/webm" });
+      const url = URL.createObjectURL(blob);
+
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = url;
+      a.download = `session-${roomId}.webm`;
+      document.body.appendChild(a);
+      a.click();
+
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      }, 200);
+    };
+
+    recorder.start();
+    setIsRecording(true);
+
+  } catch (err) {
+    alert("Screen recording permission denied.");
+  }
+};
+
+//STOP RECORDING
+
+const stopRecording = () => {
+  if (mediaRecorder) {
+    mediaRecorder.stop();
+    setIsRecording(false);
+  }
+};
+
+
 
   return (
     <div className="h-screen flex flex-col bg-gray-950">
@@ -296,6 +391,34 @@ function EditorPage() {
             {copied ? 'Copied!' : 'Copy ID'}
           </button>
         </div>
+
+        {/* Run Button */}
+        <button
+          onClick={runCode}
+          className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm font-medium"
+        >
+          Run Code
+        </button>
+
+        {/* RECORDING BUTTON */}
+        {!isRecording ? (
+          <button
+            onClick={startRecording}
+            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors text-sm font-medium flex items-center gap-2"
+          >
+            <span className="w-3 h-3 bg-red-300 rounded-full animate-pulse"></span>
+            Start Recording
+          </button>
+        ) : (
+          <button
+            onClick={stopRecording}
+            className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition-colors text-sm font-medium flex items-center gap-2"
+          >
+            ⏹ Stop Recording
+          </button>
+        )}
+
+
 
         {/* Leave Button */}
         <button
@@ -324,6 +447,22 @@ function EditorPage() {
           }}
         />
       </div>
+
+      {showConsole && (
+        <div className="h-48 bg-black border-t border-gray-700 p-4 text-green-400 font-mono text-sm overflow-auto">
+          <div className="flex justify-between mb-2">
+            <div className="text-gray-300 font-semibold">Console Output</div>
+            <button
+              onClick={() => setShowConsole(false)}
+              className="text-red-400 hover:text-red-300"
+            >
+              Close
+            </button>
+          </div>
+          <pre>{output || "// No output yet"}</pre>
+        </div>
+      )}
+
     </div>
   );
 }
